@@ -828,7 +828,13 @@ table unless asked, and never mention "the code block" or "the JSON".
   const LANG_CHART = /^(memuai[-_]?chart|chart-json)$/;
   const LANG_MERMAID = /^(mermaid|mmd)$/;
   function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i += 1) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); }
-  function encodeSrc(code) { return encodeURIComponent(code).replace(/'/g, "%27"); }
+  function encodeSrc(code) {
+    // Model output can contain lone UTF-16 surrogates; plain encodeURIComponent
+    // throws a URIError on them and the whole chat render used to die with it.
+    const safe = [...String(code ?? "")].map((char) =>
+      char.length === 1 && char.charCodeAt(0) >= 0xD800 && char.charCodeAt(0) <= 0xDFFF ? "\uFFFD" : char).join("");
+    return encodeURIComponent(safe).replace(/'/g, "%27");
+  }
   function decodeSrc(v) { try { return decodeURIComponent(v || ""); } catch (e) { return ""; } }
   function pending(en, kind) {
     const label = kind === "mermaid" ? (en ? "Drawing the scheme…" : "Рисую схему…") : (en ? "Drawing the chart…" : "Рисую график…");

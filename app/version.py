@@ -28,8 +28,8 @@ from __future__ import annotations
 
 from typing import Dict, Tuple
 
-APP_VERSION = "5.0"
-RELEASE_DATE = "2026-11-01"
+APP_VERSION = "5.1"
+RELEASE_DATE = "2026-11-08"
 
 def version_tuple(version: str = APP_VERSION) -> Tuple[int, int, int, int]:
     """``"3.0"`` -> ``(3, 0, 0, 0)`` — the Windows four-part form."""

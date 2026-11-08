@@ -181,7 +181,7 @@ class PairingTest(BotTestCase):
         await self.send(f"/start pair-{code}")
         prefs = pgdata.load_preferences()
         self.assertEqual(prefs["telegram_chat_id"], str(OWNER))
-        owner = pgdata.load_telegram_state()["owner"]
+        owner = pgdata.load_telegram_state()["owners"][0]
         self.assertEqual(owner["username"], "yono")
         welcome = next(p for m, p in self.fake.calls if m == "sendMessage" and "keyboard" in (p.get("reply_markup") or {}))
         self.assertIn("Готово", welcome["text"])
@@ -728,6 +728,11 @@ class AttachmentTest(unittest.IsolatedAsyncioTestCase):
 class NotificationTest(unittest.IsolatedAsyncioTestCase):
     base = {"telegram_enabled": True, "telegram_bot_token": TOKEN, "telegram_chat_id": "42",
             "telegram_notify_mode": "sound"}
+
+    def setUp(self) -> None:
+        # notification targets now include every bound account from the shared
+        # state — the tests above pair a chat, so clear it for a clean run
+        pgdata.update_telegram_state(lambda data: {})
 
     async def run_notify(self, prefs, **kwargs):
         sent = []

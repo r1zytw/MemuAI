@@ -170,8 +170,13 @@ def register_telegram_routes(app: FastAPI, client: httpx.AsyncClient,
         return {"ok": True}
 
     @app.post("/api/pg/telegram/unpair")
-    async def telegram_unpair():
-        telegram_pairing.unpair()
+    async def telegram_unpair(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        chat_id = str((body or {}).get("chat_id") or "").strip() if isinstance(body, dict) else ""
+        telegram_pairing.unpair(chat_id)
         return {"ok": True}
 
     @app.post("/api/pg/telegram/test")

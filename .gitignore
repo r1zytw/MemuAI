@@ -42,3 +42,6 @@ test-appdata/
 *.log
 /.ruff_cache/
 /tests/prompt_eval/results/
+
+# Release build outputs (old stubs/placeholders)
+/artifacts/

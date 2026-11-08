@@ -68,7 +68,7 @@
       <span class="tg-step-num">2</span>
       <div class="tg-step-body">
         <div class="tl">${tr("Привязка Telegram", "Pair Telegram")}</div>
-        <div class="td">${tr("Без поиска Chat ID: отсканируйте QR телефоном или откройте ссылку — бот привяжется сам.", "No Chat ID hunting: scan the QR with your phone or open the link — the bot pairs itself.")}</div>
+        <div class="td">${tr("Без поиска Chat ID: отсканируйте QR телефоном или откройте ссылку — бот привяжется сам. Можно привязать два аккаунта — оба работают одинаково полно.", "No Chat ID hunting: scan the QR with your phone or open the link — the bot pairs itself. Up to two accounts can be bound, both work in full.")}</div>
         <div id="tg-pair-area" class="tg-pair-area"></div>
       </div>
     </div>
@@ -79,7 +79,7 @@
       <input class="pinput" id="st-tg-chat" value="${esc(pref("telegram_chat_id", ""))}" placeholder="123456789" inputmode="numeric">
       <label class="field-label" for="st-tg-allowed">${tr("Дополнительные пользователи (Telegram user id через запятую)", "Additional users (Telegram user ids, comma separated)")}</label>
       <input class="pinput" id="st-tg-allowed" value="${esc((pref("telegram_allowed_users", []) || []).join(", "))}" placeholder="111111111, 222222222">
-      <div class="td">${tr("Им доступны ваши чаты и модели в их личном чате с ботом. Уведомления получает только привязанный чат.", "They get your chats and models in their private chat with the bot. Only the paired chat receives notifications.")}</div>
+      <div class="td">${tr("Им доступны ваши чаты и модели в их личном чате с ботом. Уведомления и задачи планирования получают все привязанные аккаунты.", "They get your chats and models in their private chat with the bot. Notifications and scheduled tasks reach every bound account.")}</div>
     </details>
   </div>
 
@@ -218,13 +218,24 @@
     setTimeout(() => { if (button) button.disabled = false; }, 4000);
   }
 
+  const MAX_ACCOUNTS = 2;
+  function ownersOf(s) {
+    const rows = Array.isArray(s.owners) && s.owners.length ? s.owners
+      : (s.paired && s.owner && s.owner.chat_id ? [s.owner] : []);
+    return rows.filter((row) => row && (row.chat_id || row.name || row.username));
+  }
+  function pairedFreshAfter(rows, createdAt) {
+    return rows.some((row) => row && row.paired_at && row.paired_at * 1000 > createdAt);
+  }
+
   function renderPairArea() {
     const ctx = state.ctx, s = state.status || {};
     const area = document.getElementById("tg-pair-area");
     if (!ctx || !area) return;
     const tr = (ru, en) => t(ctx, ru, en);
     const p = state.pairing;
-    if (p && !(s.paired && s.owner && s.owner.paired_at && s.owner.paired_at * 1000 > p.createdAt)) {
+    const rows = ownersOf(s);
+    if (p && !pairedFreshAfter(rows, p.createdAt)) {
       const left = Math.max(0, Math.round(p.expires * 1000 - Date.now()) / 1000);
       const mm = Math.floor(left / 60), ss = String(Math.floor(left % 60)).padStart(2, "0");
       const qr = window.MemuQR && p.link ? window.MemuQR.svg(p.link) : "";
@@ -246,17 +257,21 @@
       return;
     }
     if (p) { state.pairing = null; }
-    if (s.paired) {
-      const owner = s.owner || {};
-      const name = owner.name || (owner.username ? "@" + owner.username : "") || (tr("Chat ID ", "Chat ID ") + (owner.chat_id || ""));
-      const initial = (owner.name || owner.username || "T").trim().charAt(0).toUpperCase();
-      area.innerHTML = `
-        <div class="tg-owner">
-          <span class="tg-avatar">${ctx.esc(initial)}</span>
-          <div class="tg-owner-text"><div class="tl">${ctx.esc(name)}</div><div class="td">${owner.username && owner.name ? "@" + ctx.esc(owner.username) + " · " : ""}${tr("привязан", "paired")}${owner.paired_at ? " " + new Date(owner.paired_at * 1000).toLocaleDateString(ctx.en ? "en-GB" : "ru-RU") : ""}</div></div>
-          <button type="button" class="pbtn ghost" id="tg-repair">${tr("Привязать другой", "Pair another")}</button>
-          <button type="button" class="pbtn ghost danger" id="tg-unpair">${tr("Отвязать", "Unpair")}</button>
-        </div>`;
+    if (rows.length) {
+      const cards = rows.map((owner, index) => {
+        const name = owner.name || (owner.username ? "@" + owner.username : "") || (tr("Chat ID ", "Chat ID ") + (owner.chat_id || ""));
+        const initial = (owner.name || owner.username || "T").trim().charAt(0).toUpperCase();
+        return `
+          <div class="tg-owner">
+            <span class="tg-avatar">${ctx.esc(initial)}</span>
+            <div class="tg-owner-text"><div class="tl">${ctx.esc(name)}${rows.length > 1 ? ` <span class="td">· ${tr(`аккаунт ${index + 1}`, `account ${index + 1}`)}</span>` : ""}</div><div class="td">${owner.username && owner.name ? "@" + ctx.esc(owner.username) + " · " : ""}${tr("привязан", "paired")}${owner.paired_at ? " " + new Date(owner.paired_at * 1000).toLocaleDateString(ctx.en ? "en-GB" : "ru-RU") : ""}</div></div>
+            <button type="button" class="pbtn ghost danger" data-unpair-chat="${ctx.esc(String(owner.chat_id || ""))}">${tr("Отвязать", "Unpair")}</button>
+          </div>`;
+      }).join("");
+      area.innerHTML = `<div class="tg-owners">${cards}</div>` +
+        (rows.length < MAX_ACCOUNTS
+          ? `<button type="button" class="pbtn ghost" id="tg-repair" style="margin-top:8px">${PLANE}<span>${tr("Привязать другой аккаунт", "Pair another account")}</span></button>`
+          : `<div class="tg-owners-note">${tr("Привязаны оба аккаунта — это максимум: MemuAI работает с каждым одинаково.", "Both accounts are bound — that is the maximum: MemuAI works with each one equally.")}</div>`);
     } else {
       area.innerHTML = `<button type="button" class="pbtn tg-pair-btn" id="tg-pair-start" ${s.has_token === false ? "disabled" : ""}>${PLANE}<span>${tr("Подключить Telegram", "Connect Telegram")}</span></button>`;
     }
@@ -266,6 +281,7 @@
   function bindPairButtons() {
     const ctx = state.ctx;
     const byId = (id) => document.getElementById(id);
+    const area = document.getElementById("tg-pair-area");
     const start = byId("tg-pair-start") || byId("tg-repair");
     if (start) start.onclick = () => startPairing();
     const cancel = byId("tg-pair-cancel");
@@ -279,18 +295,23 @@
       try { await navigator.clipboard.writeText(state.pairing.raw); ctx.toast(t(ctx, "Код скопирован", "Code copied")); }
       catch (e) { ctx.toast(state.pairing.code); }
     };
-    const unpair = byId("tg-unpair");
-    if (unpair) unpair.onclick = async () => {
-      const ok = window.confirm(t(ctx, "Отвязать Telegram? Бот перестанет отвечать в этом чате, пока вы не привяжете его снова.",
-        "Unpair Telegram? The bot stops answering in that chat until you pair it again."));
-      if (!ok) return;
-      try {
-        await ctx.api("/api/pg/telegram/unpair", { method: "POST", body: {} });
-        const chat = byId("st-tg-chat"); if (chat) chat.value = "";
-        if (ctx.setPref) ctx.setPref({ telegram_chat_id: "" });
-      } catch (e) { ctx.toast(e.message, "err"); }
-      refresh();
-    };
+    if (area) area.querySelectorAll("[data-unpair-chat]").forEach((button) => {
+      button.onclick = async () => {
+        const chatId = String(button.dataset.unpairChat || "");
+        const ok = window.confirm(t(ctx,
+          "Отвязать этот аккаунт Telegram? Бот перестанет отвечать в его чате, пока вы не привяжете его снова.",
+          "Unbind this Telegram account? The bot stops answering in its chat until you pair it again."));
+        if (!ok) return;
+        try {
+          await ctx.api("/api/pg/telegram/unpair", { method: "POST", body: { chat_id: chatId } });
+          if (state.status && Array.isArray(state.status.owners)) {
+            state.status.owners = state.status.owners.filter((row) => String(row.chat_id || "") !== chatId);
+          }
+          const chat = byId("st-tg-chat"); if (chat) chat.value = "";
+        } catch (e) { ctx.toast(e.message, "err"); }
+        refresh();
+      };
+    });
   }
 
   async function startPairing() {
@@ -317,12 +338,14 @@
     if (!ctx || !document.getElementById("tg-settings")) { stop(); return; }
     try {
       state.status = await ctx.api("/api/pg/telegram/status?lang=" + (ctx.en ? "en" : "ru"));
-      if (state.pairing && state.status.paired && state.status.owner && state.status.owner.paired_at * 1000 > state.pairing.createdAt) {
+      const rows = ownersOf(state.status);
+      if (state.pairing && pairedFreshAfter(rows, state.pairing.createdAt)) {
+        const first = rows[0] || {};
         state.pairing = null;
         ctx.toast(t(ctx, "Telegram подключён ✓", "Telegram connected ✓"));
         const chat = document.getElementById("st-tg-chat");
-        if (chat) chat.value = state.status.owner.chat_id || "";
-        if (ctx.setPref) ctx.setPref({ telegram_chat_id: state.status.owner.chat_id || "", telegram_enabled: true });
+        if (chat) chat.value = first.chat_id || "";
+        if (ctx.setPref) ctx.setPref({ telegram_chat_id: first.chat_id || "", telegram_enabled: true });
       }
 
       const serverChat = (state.status.owner && state.status.owner.chat_id) || "";

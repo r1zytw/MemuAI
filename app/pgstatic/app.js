@@ -1603,6 +1603,7 @@ function mdRender(text) {
     const l = (lang || "code").toLowerCase();
     const cleanCode = blockCode.replace(/\n$/, "");
 
+    try {
     if (window.MemuRichVisuals && /^memuai[-_]?entity(?:-pending)?$/.test(l)) {
       const item = MemuRichVisuals.parse(cleanCode);
       return `@@BLOCK${codeBlocks.push(l.endsWith("-pending") ? MemuVisuals.pending(PG_LANG === "en") : item?.inline_only ? "" : item ? MemuRichVisuals.entityCard(item) : "") - 1}@@`;
@@ -1633,6 +1634,14 @@ function mdRender(text) {
     return `@@BLOCK${codeBlocks.push(
       `<div class="code-block-wrap" data-lang="${esc(l)}"><div class="code-header"><span>${esc(codeLanguageName(l))}</span><div style="display:flex;gap:4px;align-items:center">${runBtn}${previewBtn}<button class="code-copy-btn" data-copy-code aria-label="${memeText("Копировать", "Copy")}">${icon("copy")} <span>${PG_LANG === "en" ? "Copy" : "Копировать"}</span></button></div></div><pre><code class="language-${esc(l)}">${highlighted}</code></pre></div>`
     ) - 1}@@`;
+    } catch (error) {
+      // A broken chart/diagram/visual block must never take the whole chat page down:
+      // fall back to the plain code block instead.
+      console.warn("MemuAI block render failed:", error);
+      return `@@BLOCK${codeBlocks.push(
+        `<div class="code-block-wrap" data-lang="${esc(l)}"><div class="code-header"><span>${esc(codeLanguageName(l))}</span><div style="display:flex;gap:4px;align-items:center"><button class="code-copy-btn" data-copy-code aria-label="${memeText("Копировать", "Copy")}">${icon("copy")} <span>${PG_LANG === "en" ? "Copy" : "Копировать"}</span></button></div></div><pre><code class="language-${esc(l)}">${esc(cleanCode)}</code></pre></div>`
+      ) - 1}@@`;
+    }
   });
 
   // отдельная строка: иначе метка оставалась в абзаце и на экране был «@@BLOCK0@@».
@@ -5952,7 +5961,14 @@ function scheduleStreamingRender(message) {
       if (body._memuRaw === visible) continue;
       body._memuRaw = visible;
       mdCacheBypass = !!current.streaming;
-      try { renderStreamingBody(body, current, visible); } finally { mdCacheBypass = false; }
+      try { renderStreamingBody(body, current, visible); }
+      catch (error) {
+        // One malformed block (e.g. a chart with broken data) must not kill the
+        // streaming loop: show the plain text and keep the queue going.
+        console.warn("MemuAI streaming render failed:", error);
+        body.textContent = visible;
+      }
+      finally { mdCacheBypass = false; }
       body.classList.toggle("streaming-caret", !!current.streaming);
     }
     streamingRenderQueue.clear();

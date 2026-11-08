@@ -1703,8 +1703,23 @@
         <div class="pln-line"><span>${T("Права", "Permissions")}</span>${sel("permission_mode", d.permission_mode || "plan", [["plan", T("только чтение и план", "read-only, plan")], ["default", T("без подтверждений ничего не менять", "change nothing that needs approval")], ["acceptEdits", T("можно править файлы", "may edit files")]], "wide")}</div>
         <div class="pln-line"><span>${T("Модель", "Model")}</span>${modelSel}</div>`;
     }
+    const accounts = (st.meta?.telegram_accounts?.items) || [];
+    const slotLabel = (i) => {
+      const row = accounts[i];
+      const name = row ? (row.name || (row.username ? "@" + row.username : "") || row.chat_id) : "";
+      return name ? `${T("Аккаунт", "Account")} ${i + 1} · ${name}` : `${T("Аккаунт", "Account")} ${i + 1}`;
+    };
+    const target = String(d.telegram_target || "all");
+    const targetOptions = [["all", accounts.length > 1 ? T("Оба аккаунта", "Both accounts") : T("Все привязанные аккаунты", "All bound accounts")]];
+    if (accounts.length) targetOptions.push(["1", slotLabel(0)]);
+    if (accounts.length > 1) targetOptions.push(["2", slotLabel(1)]);
+    if ((target === "1" || target === "2") && !targetOptions.some(([v]) => v === target)) {
+      const i = Number(target) - 1;
+      targetOptions.push([target, `${slotLabel(i)} (${T("не привязан", "not bound")})`]);
+    }
     const notify = `<div class="pln-deliver"><span>${T("Сообщить о результате", "Report the result")}:</span>
-      <label class="pln-check"><input type="checkbox" data-path="notify_telegram" data-bool="1" ${d.notify_telegram ? "checked" : ""}><span>Telegram</span></label>
+      <label class="pln-check"><input type="checkbox" data-path="notify_telegram" data-bool="1" data-rerender="1" ${d.notify_telegram ? "checked" : ""}><span>Telegram</span></label>
+      ${d.notify_telegram ? sel("telegram_target", target, targetOptions) : ""}
       <label class="pln-check"><input type="checkbox" data-path="notify_email" data-bool="1" ${d.notify_email ? "checked" : ""}><span>${T("Почта", "Email")}</span></label>
       <em class="pln-hint">${T("уведомление Windows — по настройкам", "Windows notification — per Settings")}</em></div>`;
     return `<div class="pln-kinds" role="group" aria-label="${T("Что сделать", "What to do")}">${kinds}</div>${kindDesc ? `<p class="pln-kind-desc">${I("info")}<span><b>${H(kindNow.title || "")}</b> — ${H(kindDesc)}</span></p>` : ""}${picker}<div class="pln-kind-body">${body}</div>${notify}`;

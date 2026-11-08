@@ -474,7 +474,8 @@ async def _run_task(task: Dict[str, Any]) -> None:
     if task.get("notify_telegram", True):
         try:
             from .telegram_bot import send_notification
-            await send_notification(title, text, model=str(task.get("model") or ""), kind="schedule")
+            await send_notification(title, text, model=str(task.get("model") or ""), kind="schedule",
+                                    which=str(task.get("telegram_target") or "all"))
         except Exception as exc:  # noqa: BLE001
             log.warning("scheduler: Telegram notification not sent: %s", exc)
     if task.get("notify_email", False) and prefs.get("schedule_email_enabled", False):

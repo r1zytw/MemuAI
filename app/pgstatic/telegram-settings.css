@@ -66,6 +66,8 @@
 .tg-pair-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .tg-countdown { font-variant-numeric: tabular-nums; }
 .tg-owner { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--border); background: var(--panel); }
+.tg-owners { display: grid; gap: 8px; }
+.tg-owners-note { color: var(--muted); font-size: 12.5px; padding: 2px 2px 0; }
 .tg-avatar { width: 36px; height: 36px; flex: none; display: grid; place-items: center; border-radius: 50%; color: #fff; font-weight: 700;
   background: linear-gradient(135deg, #37aee2, #1e96c8); }
 .tg-owner-text { min-width: 0; flex: 1; }

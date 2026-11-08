@@ -599,16 +599,22 @@ def keyboard(pid: str, lang: str, *, subscribed: bool = True, webapp_url: Option
 async def _default_sender(prefs: Dict[str, Any], text: str, markup: Optional[Dict[str, Any]], silent: bool) -> bool:
     import httpx
     from .telegram_api import BotApi
+    from .telegram_bot import notification_chats
     token = str(prefs.get("telegram_bot_token") or "").strip()
-    chat_id = str(prefs.get("telegram_chat_id") or "").strip()
-    payload: Dict[str, Any] = {"chat_id": chat_id, "text": text, "parse_mode": "HTML",
+    chat_ids = notification_chats(prefs)
+    if not chat_ids:
+        chat_ids = [str(prefs.get("telegram_chat_id") or "").strip()]
+    payload: Dict[str, Any] = {"text": text, "parse_mode": "HTML",
                                "link_preview_options": {"is_disabled": True}}
     if markup:
         payload["reply_markup"] = markup
     if silent:
         payload["disable_notification"] = True
     async with httpx.AsyncClient(timeout=httpx.Timeout(20, connect=10)) as client:
-        await BotApi(client, token).call("sendMessage", essential=True, **payload)
+        for chat_id in chat_ids:
+            if not chat_id:
+                continue
+            await BotApi(client, token).call("sendMessage", essential=True, chat_id=chat_id, **payload)
     return True
 
 def set_sender(sender) -> None:

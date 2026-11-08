@@ -1714,6 +1714,20 @@ def _telegram_state(raw: Any) -> Dict[str, Any]:
             "username": str(owner.get("username") or "")[:64],
             "paired_at": _telegram_number(owner.get("paired_at")),
         }
+    # Several bound Telegram accounts (5.0): each slot is one paired private chat.
+    owners_raw = raw.get("owners") if isinstance(raw.get("owners"), list) else []
+    owners_clean = []
+    for owner_row in owners_raw[:8]:
+        if isinstance(owner_row, dict) and owner_row.get("chat_id"):
+            owners_clean.append({
+                "chat_id": str(owner_row.get("chat_id") or "")[:40],
+                "user_id": str(owner_row.get("user_id") or "")[:40],
+                "name": str(owner_row.get("name") or "")[:120],
+                "username": str(owner_row.get("username") or "")[:64],
+                "paired_at": _telegram_number(owner_row.get("paired_at")),
+            })
+    if owners_clean:
+        result["owners"] = owners_clean
     bot = raw.get("bot") if isinstance(raw.get("bot"), dict) else {}
     if bot:
         result["bot"] = {
@@ -1753,7 +1767,8 @@ def load_telegram_state() -> Dict[str, Any]:
 
     ``sessions`` – per Telegram chat selections (profile, chat, model …);
     ``pairing`` – the one-time pairing code (hash only) shown in Settings;
-    ``owner`` – who is paired; ``bot`` – status heartbeat written by the bot
+    ``owner`` – legacy single paired account; ``owners`` – all bound accounts
+    (up to two, 5.0 multi-account); ``bot`` – status heartbeat written by the bot
     process (MemuAI Proxy) and read by the Settings panel (MemuAI window);
     ``poll`` – the persisted getUpdates offset.
     """
@@ -1782,7 +1797,7 @@ def save_telegram_state(value: Dict[str, Any]) -> Dict[str, Any]:
 
     def apply(data: Dict[str, Any]) -> Dict[str, Any]:
         data.setdefault("sessions", {}).update(sessions)
-        for key in ("pairing", "owner", "bot", "poll", "test"):
+        for key in ("pairing", "owner", "owners", "bot", "poll", "test"):
             if key in payload:
                 if payload[key]:
                     data[key] = payload[key]

@@ -84,7 +84,11 @@ window.addEventListener("load",function(){post();if(window.ResizeObserver)new Re
     if (code.length > MAX_SOURCE) {
       return `<div class="memuai-visual failed" role="note">${en ? "The visualization is too large to show." : "Визуализация слишком большая, чтобы её показать."}</div>`;
     }
-    const encoded = encodeURIComponent(code).replace(/'/g, "%27");
+    // Lone UTF-16 surrogates from model output would throw a URIError here and
+    // break the whole chat render — replace them with U+FFFD first.
+    const safe = [...String(code ?? "")].map((char) =>
+      char.length === 1 && char.charCodeAt(0) >= 0xD800 && char.charCodeAt(0) <= 0xDFFF ? "\uFFFD" : char).join("");
+    const encoded = encodeURIComponent(safe).replace(/'/g, "%27");
     return `<div class="memuai-visual" data-visual="${encoded}"><div class="visual-loading"><i></i>${en ? "Preparing the visualization…" : "Готовлю визуализацию…"}</div></div>`;
   }
 

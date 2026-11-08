@@ -121,38 +121,55 @@ def _redact_token(text: str) -> str:
     return redact(text)
 
 def authorized_user_ids(prefs: Optional[Dict[str, Any]] = None) -> List[str]:
-    """Telegram user ids allowed to use MemuAI (the paired owner first).
+    """Telegram user ids allowed to use MemuAI (every bound account first).
 
     Public helper for the Mini App (``app.tg_webapp``) to validate initData.
     """
+    from . import telegram_pairing
     prefs = prefs if prefs is not None else load_preferences()
-    owner = (load_telegram_state().get("owner") or {})
     result: List[str] = []
-    chat_id = str(prefs.get("telegram_chat_id") or "").strip()
-    if owner.get("chat_id") == chat_id and owner.get("user_id"):
-        result.append(str(owner["user_id"]))
-    elif chat_id and not chat_id.startswith("-"):
-        result.append(chat_id)
+    for row in telegram_pairing.bound_chats(prefs):
+        user_id = str(row.get("user_id") or "").strip()
+        chat_id = str(row.get("chat_id") or "").strip()
+        if user_id:
+            result.append(user_id)
+        elif chat_id and not chat_id.startswith("-"):
+            result.append(chat_id)
     result.extend(str(x) for x in prefs.get("telegram_allowed_users") or [])
     return list(dict.fromkeys(result))
 
 def _allowed(prefs: Dict[str, Any], chat_id: str, user_id: Any = "") -> bool:
-    """The paired chat, or a whitelisted user's own private chat.
+    """A bound account's chat, or a whitelisted user's own private chat.
 
     Only private chats are served: the chat id must be a positive number, and
     when the sender is known it must equal the chat id (in a private chat the
     two are the same Telegram id). Group and channel ids are negative — they
     never pass, even if one was saved as ``telegram_chat_id``."""
+    from . import telegram_pairing
     chat_id = str(chat_id or "").strip()
     if not chat_id.isdigit() or int(chat_id) <= 0:
         return False
     if user_id and str(user_id) != chat_id:
         return False
-    configured = str(prefs.get("telegram_chat_id") or "").strip()
-    if configured and configured == chat_id:
+    bound = {str(row.get("chat_id") or "").strip() for row in telegram_pairing.bound_chats(prefs)}
+    if chat_id in bound:
         return True
     extra = {str(x) for x in prefs.get("telegram_allowed_users") or []}
     return chat_id in extra
+
+def notification_chats(prefs: Optional[Dict[str, Any]] = None, which: str = "all") -> List[str]:
+    """Chat ids a notification should go to, honouring the task's account choice.
+
+    ``which``: ``all`` (both bound accounts), ``1`` or ``2`` (one slot). When the
+    chosen slot is not bound any more, every bound chat receives the message —
+    a reminder must not be silently dropped."""
+    from . import telegram_pairing
+    prefs = prefs if prefs is not None else load_preferences()
+    rows = telegram_pairing.bound_chats(prefs)
+    if str(which or "all") in ("1", "2") and len(rows) > 1:
+        index = int(which) - 1
+        rows = rows[index:index + 1] or rows
+    return [str(row.get("chat_id") or "").strip() for row in rows if str(row.get("chat_id") or "").strip()]
 
 def _profiles() -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     state = load_profiles()
@@ -2311,7 +2328,7 @@ async def _apply_menu_button(client: Any, token: str, prefs: Dict[str, Any], url
     """Point the menu button at the current Mini App address — the default
     button and every authorized chat — and read it back (getChatMenuButton):
     a stale trycloudflare host there means «server IP address not found»."""
-    targets = [str(prefs.get("telegram_chat_id") or "").strip()]
+    targets = notification_chats(prefs)
     targets += [str(x) for x in prefs.get("telegram_allowed_users") or []]
     button = ({"type": "web_app", "text": "MemuAI", "web_app": {"url": url}} if url
               else {"type": "commands"})
@@ -2342,7 +2359,7 @@ async def _refresh_menu_cards(client: Any, token: str, prefs: Dict[str, Any]) ->
     """Re-render each authorized chat's menu card that shows the Mini App
     button, so no sent keyboard keeps an old address."""
     state = await _io(load_telegram_state)
-    allowed = set(authorized_user_ids(prefs)) | {str(prefs.get("telegram_chat_id") or "")}
+    allowed = set(authorized_user_ids(prefs)) | set(notification_chats(prefs))
     for chat_id, session in (state.get("sessions") or {}).items():
         if chat_id not in allowed or session.get("menu_screen") != "home" or not session.get("menu_message_id"):
             continue
@@ -2376,7 +2393,16 @@ async def _try_pairing(client: Any, token: str, message: Dict[str, Any], prefs: 
             prefs, "❌ Код не подошёл или устарел. Создайте новый в MemuAI → Настройки → Мессенджеры → Telegram.",
             "❌ The code is wrong or expired. Create a new one in MemuAI → Settings → Messengers → Telegram."))
         return True
-    owner = await _io(telegram_pairing.complete_pairing, chat, message.get("from") or {})
+    outcome = await _io(telegram_pairing.complete_pairing, chat, message.get("from") or {})
+    if outcome.get("full"):
+        await _send(client, token, str(chat.get("id")), _tr(
+            prefs,
+            "⛔ К MemuAI уже привязаны два аккаунта — больше нельзя. Отвяжите один из них в MemuAI → "
+            "Настройки → Мессенджеры → Telegram и привяжите этот снова.",
+            "⛔ Two accounts are already bound to MemuAI — that is the limit. Unbind one in MemuAI → "
+            "Settings → Messengers → Telegram, then pair this one again."))
+        return True
+    owner = outcome.get("owner") or {}
     prefs = await _io(load_preferences)
     name = html.escape(owner.get("name") or "")
     await _send_reply_keyboard(client, token, str(chat.get("id")), prefs,
@@ -2408,7 +2434,9 @@ async def _reject(client: Any, token: str, chat_id: str, prefs: Dict[str, Any]) 
         for key in sorted(_unauthorized_replied, key=_unauthorized_replied.get)[:250]:
             _unauthorized_replied.pop(key, None)
     try:
-        await _send(client, token, chat_id, _unauthorized_text(prefs, bool(prefs.get("telegram_chat_id"))))
+        from . import telegram_pairing
+        paired = bool(telegram_pairing.bound_chats(prefs))
+        await _send(client, token, chat_id, _unauthorized_text(prefs, paired))
     except Exception:
         pass
 
@@ -3137,25 +3165,26 @@ _CATEGORY_KEYS = {"completion": "telegram_notify_completion", "schedule": "teleg
 async def send_notification(title: str, text: str, *, source_chat_id: str = "",
                             source_chat_title: str = "", profile_id: str = "", model: str = "",
                             elapsed_ms: int = 0, kind: str = "completion",
-                            silent: bool = False) -> None:
-    """Notify the paired chat: finished answers, schedules, Work, modules.
+                            silent: bool = False, which: str = "all") -> None:
+    """Notify the bound Telegram accounts: finished answers, schedules, Work, modules.
 
     ``telegram_notify_mode`` (off/silent/sound) is the master switch for
     completions, schedules and Work; each category also has its own switch.
     A module the user explicitly configured with its own Telegram switch (e.g.
     «New API models») is not silenced by the completion mode (Round 19): it is
     delivered silently when the mode is off. Quiet hours deliver silently.
+    ``which`` selects the accounts (``all``, ``1`` or ``2`` — see notification_chats).
     """
     prefs = await _io(load_preferences)
     token = str(prefs.get("telegram_bot_token") or "").strip()
-    telegram_chat_id = str(prefs.get("telegram_chat_id") or "").strip()
+    chat_ids = await _io(notification_chats, prefs, which)
     mode = _notify_mode(prefs)
     kind = kind if kind in _CATEGORY_KEYS else "completion"
     if kind == "module" and mode == "off":
         mode = "silent"
     if not prefs.get(_CATEGORY_KEYS[kind], True):
         return
-    if mode == "off" or not prefs.get("telegram_enabled") or not token or not telegram_chat_id:
+    if mode == "off" or not prefs.get("telegram_enabled") or not token or not chat_ids:
         return
     quiet = bool(silent) or mode != "sound" or _in_quiet_hours(prefs)
     icon = {"schedule": "⏰", "module": "🔔", "work": "🛠"}.get(kind, "✅")
@@ -3191,8 +3220,13 @@ async def send_notification(title: str, text: str, *, source_chat_id: str = "",
     try:
 
         async with _httpx_client(timeout=httpx.Timeout(30, connect=10)) as client:
-            await _send(client, token, telegram_chat_id, body, keyboard,
-                        markdown=True, silent=quiet)
+            for chat_id in chat_ids:
+                try:
+                    await _send(client, token, chat_id, body, keyboard,
+                                markdown=True, silent=quiet)
+                except Exception as exc:
+                    log.warning("Telegram notification to %s failed: %s",
+                                chat_id, _redact_token(str(exc)))
     except Exception as exc:
         log.warning("Telegram notification failed: %s", _redact_token(str(exc)))
 

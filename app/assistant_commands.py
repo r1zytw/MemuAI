@@ -2580,8 +2580,9 @@ async def deliver_reminder(task: Dict[str, Any]) -> Tuple[bool, str]:
         from .pgdata import load_preferences
         prefs = load_preferences()
         token = str(prefs.get("telegram_bot_token") or "").strip()
-        chat_id = str(prefs.get("telegram_chat_id") or "").strip()
-        if task.get("notify_telegram", True) and prefs.get("telegram_enabled") and token and chat_id:
+        from .telegram_bot import notification_chats
+        chat_ids = notification_chats(prefs, str(task.get("telegram_target") or "all"))
+        if task.get("notify_telegram", True) and prefs.get("telegram_enabled") and token and chat_ids:
             import httpx
             from . import telegram_bot
             quiet = False
@@ -2591,7 +2592,11 @@ async def deliver_reminder(task: Dict[str, Any]) -> Tuple[bool, str]:
                 quiet = False
             body = ("⏰ **" + ("Reminder" if lang == "en" else "Напоминание") + "**\n\n" + text)
             async with httpx.AsyncClient() as client:
-                await telegram_bot._send(client, token, chat_id, body, None, markdown=True, silent=quiet)
+                for chat_id in chat_ids:
+                    try:
+                        await telegram_bot._send(client, token, chat_id, body, None, markdown=True, silent=quiet)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("reminder to Telegram %s failed: %s", chat_id, exc)
             ok, info = True, "telegram"
         else:
             info = "telegram is not paired"

@@ -130,7 +130,7 @@ def _clean_module_handler(task: Dict[str, Any]) -> None:
 
 def _clean_task(raw: Dict[str, Any]) -> Dict[str, Any]:
     """A task coming from the builder: only known user fields."""
-    keys = ("id", "name", "prompt", "model", "mode", "kind", "enabled", "notify_telegram", "notify_email",
+    keys = ("id", "name", "prompt", "model", "mode", "kind", "enabled", "notify_telegram", "notify_email", "telegram_target",
             "project_id", "access_mode", "command", "command_id", "project_path", "permission_mode", "rule",
             "run_at", "interval_minutes", "daily_at", "created_by", "lang", "reminder_text", "icon", "steps", "tool", "args", "dfy_browser", "team_id",
             "scenario", "scenario_variables", "scenario_base", "run_allowlist", "require_confirm", "confirmed",
@@ -197,6 +197,9 @@ def _clean_task(raw: Dict[str, Any]) -> Dict[str, Any]:
     task["enabled"] = task.get("enabled", True) is not False
     task["notify_telegram"] = task.get("notify_telegram") is True
     task["notify_email"] = task.get("notify_email") is True
+    # Which bound Telegram account(s) receive the result: both (default), or one slot.
+    target = str(task.get("telegram_target") or "all").strip()
+    task["telegram_target"] = target if target in ("all", "1", "2") else "all"
     if task["kind"] == "dfy":
         browser = task.get("dfy_browser") or ""
         if browser not in ("", "isolated", "chrome"):
@@ -593,6 +596,20 @@ def register(app: Any, *, completion: Optional[Callable[..., Awaitable[str]]] = 
                                        "processes": True, "power": True, "network": True},
                                "events": list(rules.EVENTS), "conditions": list(rules.CONDITION_TYPES),
                                "kinds": list(rules.ACTION_KINDS), "protocol": rules.CHAT_PROTOCOL}
+        try:
+            from .pgdata import load_preferences
+            from .telegram_pairing import MAX_OWNERS, bound_chats
+            prefs = await asyncio.to_thread(load_preferences)
+            rows = await asyncio.to_thread(bound_chats, prefs)
+            out["telegram_accounts"] = {
+                "max": MAX_OWNERS,
+                "items": [{"chat_id": str(row.get("chat_id") or ""),
+                           "name": str(row.get("name") or ""),
+                           "username": str(row.get("username") or "")}
+                          for row in rows],
+            }
+        except Exception:
+            out["telegram_accounts"] = {"max": 2, "items": []}
         try:
             from .schedule_integrations import catalog
             out["integrations"] = await asyncio.to_thread(catalog)

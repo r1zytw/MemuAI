@@ -221,7 +221,8 @@ async def notify(task: Dict[str, Any], ok: bool, text: str, *, prefs: Optional[D
     if task.get("notify_telegram"):
         try:
             from .telegram_bot import send_notification
-            await send_notification(head, body, model=str(task.get("model") or ""), kind="schedule")
+            await send_notification(head, body, model=str(task.get("model") or ""), kind="schedule",
+                                    which=str(task.get("telegram_target") or "all"))
         except Exception as exc:  # noqa: BLE001
             log.info("schedule: Telegram notification not sent (%s)", type(exc).__name__)
     if task.get("notify_email") and prefs.get("schedule_email_enabled", False):
@@ -248,7 +249,7 @@ async def _notify_only(task: Dict[str, Any]) -> Tuple[bool, str, Dict[str, Any]]
         problems.append(f"Windows: {type(exc).__name__}")
     if task.get("notify_telegram"):
         try:
-            sent, info = await _telegram_text(prefs, text, lang)
+            sent, info = await _telegram_text(prefs, text, lang, which=str(task.get("telegram_target") or "all"))
             (delivered if sent else problems).append("telegram" if sent else f"Telegram: {info}")
         except Exception as exc:  # noqa: BLE001
             problems.append(f"Telegram: {exc}"[:200])
@@ -266,10 +267,17 @@ async def _notify_only(task: Dict[str, Any]) -> Tuple[bool, str, Dict[str, Any]]
     out = text if not problems else text + "\n\n" + "; ".join(problems)
     return ok, out, {"kind": "notify", "delivered": delivered, "notified": True}
 
-async def _telegram_text(prefs: Dict[str, Any], text: str, lang: str) -> Tuple[bool, str]:
+async def _telegram_text(prefs: Dict[str, Any], text: str, lang: str,
+                         which: str = "all") -> Tuple[bool, str]:
+    """Send a reminder straight to the bound Telegram account(s) chosen by the task."""
     token = str(prefs.get("telegram_bot_token") or "").strip()
-    chat_id = str(prefs.get("telegram_chat_id") or "").strip()
-    if not (prefs.get("telegram_enabled") and token and chat_id):
+    try:
+        from .telegram_bot import notification_chats
+        chat_ids = notification_chats(prefs, which)
+    except Exception:
+        chat_ids = [str(prefs.get("telegram_chat_id") or "").strip()]
+    chat_ids = [chat_id for chat_id in chat_ids if chat_id]
+    if not (prefs.get("telegram_enabled") and token and chat_ids):
         return False, tr(lang, "бот Telegram не подключён", "the Telegram bot is not paired")
     import httpx
     from . import telegram_bot
@@ -278,9 +286,15 @@ async def _telegram_text(prefs: Dict[str, Any], text: str, lang: str) -> Tuple[b
     except Exception:
         quiet = False
     body = "⏰ **" + tr(lang, "Напоминание", "Reminder") + "**\n\n" + text
+    sent = 0
     async with httpx.AsyncClient() as client:
-        await telegram_bot._send(client, token, chat_id, body, None, markdown=True, silent=quiet)
-    return True, "telegram"
+        for chat_id in chat_ids:
+            try:
+                await telegram_bot._send(client, token, chat_id, body, None, markdown=True, silent=quiet)
+                sent += 1
+            except Exception as exc:  # noqa: BLE001
+                log.info("schedule reminder to Telegram %s failed: %s", chat_id, type(exc).__name__)
+    return (True, "telegram") if sent else (False, tr(lang, "не удалось отправить", "could not send"))
 
 async def _memucode(task: Dict[str, Any], *, popen: Any = subprocess.Popen) -> Tuple[bool, str, Dict[str, Any]]:
     lang = await asyncio.to_thread(_lang)

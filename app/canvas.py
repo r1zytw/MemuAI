@@ -26,6 +26,7 @@ import csv
 import difflib
 import io
 import json
+import logging
 import os
 import re
 import threading
@@ -36,6 +37,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from . import canvas_files
+
+log = logging.getLogger("memuai.canvas")
 
 TYPES = ("document", "code", "html", "table", "email", "diagram", "slides")
 TYPE_ALIASES = {
@@ -1153,6 +1156,9 @@ def run_tool(chat_id: str, tool: str, args: Dict[str, Any], *, model: str = "", 
         return {"tool": name, "error": str(exc)}
     except KeyError as exc:
         return {"tool": name, "error": f"Not found: {exc}"}
+    except Exception as exc:  # noqa: BLE001 - a tool failure must be an error message for the model, never a 500 page
+        log.warning("canvas tool %s failed: %s", name, type(exc).__name__)
+        return {"tool": name, "error": f"Canvas tool failed: {type(exc).__name__}: {str(exc)[:200]}"}
 
 EXT = {"document": "md", "html": "html", "table": "csv", "email": "eml", "diagram": "mmd", "slides": "md"}
 CODE_EXT = {"python": "py", "py": "py", "javascript": "js", "js": "js", "typescript": "ts", "ts": "ts", "tsx": "tsx",

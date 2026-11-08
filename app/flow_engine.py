@@ -1191,8 +1191,9 @@ class Services:
     async def telegram(self, text: str, *, silent: bool = False) -> str:
         prefs = self.prefs()
         token = str(prefs.get("telegram_bot_token") or "").strip()
-        chat_id = str(prefs.get("telegram_chat_id") or "").strip()
-        if not (prefs.get("telegram_enabled") and token and chat_id):
+        from .telegram_bot import notification_chats
+        chat_ids = notification_chats(prefs, "all")
+        if not (prefs.get("telegram_enabled") and token and chat_ids):
             raise StepFailed(tr(self.lang, "Бот Telegram не подключён (Настройки → Мессенджеры → Telegram)",
                                 "The Telegram bot is not paired (Settings → Messengers → Telegram)"))
         import httpx
@@ -1201,9 +1202,15 @@ class Services:
             quiet = silent or bool(telegram_bot._in_quiet_hours(prefs))
         except Exception:
             quiet = silent
+        sent = 0
         async with httpx.AsyncClient() as client:
-            ids = await telegram_bot._send(client, token, chat_id, text[:12000], None, markdown=True, silent=quiet)
-        return f"telegram:{len(ids or [])}"
+            for chat_id in chat_ids:
+                try:
+                    ids = await telegram_bot._send(client, token, chat_id, text[:12000], None, markdown=True, silent=quiet)
+                    sent += len(ids or [])
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("flow telegram step to %s failed: %s", chat_id, exc)
+        return f"telegram:{sent}"
 
     async def notify(self, title: str, text: str, *, windows: bool, inbox: bool, task: Dict[str, Any]) -> List[str]:
         done: List[str] = []
@@ -1290,28 +1297,34 @@ class Services:
             pass
 
     async def telegram_form(self, form_id: str, form: Dict[str, Any], title: str) -> bool:
-        """The same form as inline buttons in the paired Telegram chat (answers go to ask_user.STORE)."""
+        """The same form as inline buttons in every bound Telegram chat (answers go to ask_user.STORE)."""
         prefs = self.prefs()
         token = str(prefs.get("telegram_bot_token") or "").strip()
-        chat_id = str(prefs.get("telegram_chat_id") or "").strip()
-        if not (prefs.get("telegram_enabled") and token and chat_id):
+        from .telegram_bot import notification_chats
+        chat_ids = notification_chats(prefs, "all")
+        if not (prefs.get("telegram_enabled") and token and chat_ids):
             return False
         try:
             import httpx
             from . import ask_user_telegram as aut
             from . import telegram_bot
             state = aut.new_state(form_id, form, self.lang)
-            previous = aut._ACTIVE.get(chat_id)
-            if previous and previous.get("id") != form_id:
-                return False
-            aut._ACTIVE[chat_id] = state
             text, markup = aut.render(state)
             head = "🗓 <b>" + (tr(self.lang, "Планирование · ", "Planning · ") + title)[:120].replace("<", "&lt;") + "</b>\n"
             async with httpx.AsyncClient() as client:
                 api = telegram_bot._api(client, token)
-                sent = await api.call("sendMessage", essential=True, chat_id=chat_id, text=head + text,
-                                      parse_mode="HTML", reply_markup=markup)
-            state["message_id"] = int((sent or {}).get("message_id") or 0) if isinstance(sent, dict) else 0
+                for chat_id in chat_ids:
+                    previous = aut._ACTIVE.get(chat_id)
+                    if previous and previous.get("id") != form_id:
+                        continue
+                    aut._ACTIVE[chat_id] = state
+                    try:
+                        sent = await api.call("sendMessage", essential=True, chat_id=chat_id, text=head + text,
+                                              parse_mode="HTML", reply_markup=markup)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("telegram form to %s failed: %s", chat_id, exc)
+                        continue
+                    state["message_id"] = int((sent or {}).get("message_id") or 0) if isinstance(sent, dict) else 0
             return True
         except Exception as exc:  # noqa: BLE001
             log.info("flow ask: telegram form not sent (%s)", type(exc).__name__)
